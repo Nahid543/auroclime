@@ -1,4 +1,4 @@
-package com.appdev.auroclime
+package com.auroclime.app
 
 import io.flutter.embedding.android.FlutterActivity
 
