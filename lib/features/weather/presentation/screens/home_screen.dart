@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../../core/app_lifecycle_service.dart';
 import '../../domain/weather_service.dart';
 import '../../domain/location_service.dart';
 import '../../domain/settings_service.dart';
@@ -31,16 +32,16 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen> {
   final _weatherService = WeatherService();
   final _locationService = LocationService();
   final _settingsService = SettingsService();
   final _savedLocationsService = SavedLocationsService();
   final _connectivityService = ConnectivityService();
-  final _pageController = PageController();
+  PageController _pageController = PageController();
   final _weatherStreakService = WeatherStreakService();
   WeatherStreak? _currentStreak;
-  
+
   List<LocationWeatherData> _locations = [];
   int _currentPage = 0;
   TemperatureUnit _temperatureUnit = TemperatureUnit.celsius;
@@ -50,50 +51,214 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   LocationResult? _locationError;
   bool _animateIn = false;
   bool _isOffline = false;
+  bool _isHandlingResumeCheck = false;
+  bool _pendingSettingsReturn = false;
+  bool _shouldDismissBlockingRouteOnResume = false;
+  bool _pendingPageViewSync = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    AppLifecycleService.state.addListener(_onLifecycleStateChanged);
     _initializeConnectivityMonitoring();
     _initialize();
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    AppLifecycleService.state.removeListener(_onLifecycleStateChanged);
     _weatherService.dispose();
     _connectivityService.dispose();
     _pageController.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
+  void _onLifecycleStateChanged() {
+    final state = AppLifecycleService.state.value;
+    if (mounted) {
+      setState(() {});
+    }
+
     if (state == AppLifecycleState.resumed) {
-      // User returned to app - maybe from enabling GPS in settings
-      // Clear any location error and retry
-      if (_locationError != null || (_locations.isEmpty && _isLoading)) {
-        _retryLocationAfterResume();
-      } else {
-        _refreshCurrentLocation();
+      _handleAppResumed();
+    }
+  }
+
+  void _schedulePageViewSync({
+    required String reason,
+    bool allowRecreate = true,
+  }) {
+    if (_pendingPageViewSync) return;
+    _pendingPageViewSync = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _pendingPageViewSync = false;
+      if (!mounted) return;
+      await _ensurePageViewState(reason: reason, allowRecreate: allowRecreate);
+    });
+  }
+
+  int _safeCurrentPageIndex() {
+    if (_locations.isEmpty) return 0;
+    return _currentPage.clamp(0, _locations.length - 1);
+  }
+
+  void _recreatePageController({
+    required int initialPage,
+    required String reason,
+  }) {
+    final previous = _pageController;
+    _pageController = PageController(initialPage: initialPage);
+    previous.dispose();
+  }
+
+  Future<void> _ensurePageViewState({
+    required String reason,
+    bool allowRecreate = false,
+  }) async {
+    if (!mounted) return;
+
+    if (_locations.isEmpty) {
+      if (_currentPage != 0) {
+        setState(() => _currentPage = 0);
+      }
+      return;
+    }
+
+    final safeIndex = _safeCurrentPageIndex();
+    if (safeIndex != _currentPage && mounted) {
+      setState(() => _currentPage = safeIndex);
+    }
+
+    if (!_pageController.hasClients) {
+      if (allowRecreate) {
+        _recreatePageController(
+          initialPage: safeIndex,
+          reason: 'no_clients/$reason',
+        );
+        if (mounted) {
+          setState(() {});
+        }
+      }
+      return;
+    }
+
+    final pageValue = _pageController.page;
+    final pageIndex = (pageValue ?? _pageController.initialPage.toDouble())
+        .round();
+    final invalidControllerPage =
+        pageIndex < 0 || pageIndex > (_locations.length - 1);
+
+    if (invalidControllerPage && allowRecreate) {
+      _recreatePageController(
+        initialPage: safeIndex,
+        reason: 'invalid_controller_page=$pageIndex/$reason',
+      );
+      if (mounted) {
+        setState(() {});
+      }
+      return;
+    }
+
+    try {
+      _pageController.jumpToPage(safeIndex);
+    } catch (e) {
+      if (allowRecreate) {
+        _recreatePageController(
+          initialPage: safeIndex,
+          reason: 'jump_failure/$reason',
+        );
+        if (mounted) {
+          setState(() {});
+        }
       }
     }
   }
 
-  /// Called when app resumes - clears errors and retries location from scratch
-  Future<void> _retryLocationAfterResume() async {
-    if (mounted) {
+  Future<void> _handleAppResumed() async {
+    if (_isHandlingResumeCheck) {
+      return;
+    }
+
+    final route = ModalRoute.of(context);
+    final isRouteCurrent = route?.isCurrent ?? true;
+    if (!isRouteCurrent && !_shouldDismissBlockingRouteOnResume) {
+      return;
+    }
+
+    _isHandlingResumeCheck = true;
+
+    try {
+      await Future.delayed(const Duration(milliseconds: 250));
+
+      if (!mounted) return;
+      await _dismissBlockingRouteOnResumeIfNeeded();
+
+      final readinessError = await _locationService.getLocationReadiness();
+
+      if (!mounted) return;
+
+      if (readinessError != null) {
+        if (_locations.isEmpty) {
+          setState(() {
+            _locationError = readinessError;
+            _isLoading = false;
+          });
+        }
+        _ensureNonBlankState();
+        return;
+      }
+
+      if (_pendingSettingsReturn ||
+          _locations.isEmpty ||
+          _locationError != null) {
+        await _loadAllLocations();
+      } else {
+        await _refreshCurrentLocation();
+      }
+
+      if (!mounted) return;
+      await _ensurePageViewState(reason: 'resume', allowRecreate: true);
+      _ensureNonBlankState();
+    } catch (_) {
+      if (!mounted) return;
+      _ensureNonBlankState(
+        fallbackMessage:
+            'Unable to refresh weather after returning to the app.',
+      );
+    } finally {
+      _pendingSettingsReturn = false;
+      _shouldDismissBlockingRouteOnResume = false;
+      _isHandlingResumeCheck = false;
+    }
+  }
+
+  Future<void> _dismissBlockingRouteOnResumeIfNeeded() async {
+    if (!_shouldDismissBlockingRouteOnResume || !mounted) {
+      return;
+    }
+
+    final route = ModalRoute.of(context);
+    final routeIsCovered = route != null && !route.isCurrent;
+    final navigator = Navigator.of(context, rootNavigator: true);
+
+    if (!routeIsCovered || !navigator.canPop()) {
+      return;
+    }
+
+    await navigator.maybePop();
+  }
+
+  void _ensureNonBlankState({
+    String fallbackMessage = 'Unable to load weather. Please try again.',
+  }) {
+    if (!mounted) return;
+
+    if (_locations.isEmpty && !_isLoading && _locationError == null) {
       setState(() {
-        _locationError = null;  // Clear the error
-        _isLoading = true;
+        _locationError = LocationResult.error(fallbackMessage);
+        _isLoading = false;
       });
     }
-    
-    // Small delay to allow GPS service to initialize
-    await Future.delayed(const Duration(milliseconds: 500));
-    
-    await _loadAllLocations();
   }
 
   void _initializeConnectivityMonitoring() {
@@ -102,7 +267,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         setState(() {
           _isOffline = !isConnected;
         });
-        
+
         if (!isConnected) {
           _showSnackBar('⚠️ No internet connection');
         } else if (_locations.isEmpty) {
@@ -120,6 +285,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (mounted) {
       setState(() => _animateIn = true);
     }
+    _ensureNonBlankState();
   }
 
   Future<void> _loadInitialStreak() async {
@@ -128,9 +294,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (mounted) {
         setState(() => _currentStreak = streak);
       }
-    } catch (e) {
-      debugPrint('Error loading streak: $e');
-    }
+    } catch (_) {}
   }
 
   Future<void> _loadSettings() async {
@@ -139,7 +303,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _settingsService.getTemperatureUnit(),
         _settingsService.getWindSpeedUnit(),
       ]);
-      
+
       if (mounted) {
         setState(() {
           _temperatureUnit = results[0] as TemperatureUnit;
@@ -153,11 +317,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _loadAllLocations() async {
     if (!mounted) return;
-    
+
     try {
       // Load saved locations first
       final savedLocations = await _savedLocationsService.getSavedLocations();
-      
+      if (!mounted) return;
+
       if (savedLocations.isEmpty) {
         // No saved locations - try cached weather first for instant display
         await _loadCachedWeatherThenRefresh();
@@ -168,7 +333,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (_locations.isEmpty) {
         setState(() => _isLoading = true);
       }
-      
+
       // Load weather for all saved locations in parallel
       final futures = savedLocations.map((location) async {
         try {
@@ -177,39 +342,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             longitude: location.longitude,
             locationName: location.name,
           );
-          
-          return LocationWeatherData(
-            location: location,
-            snapshot: snapshot,
-          );
-        } catch (e) {
-          debugPrint('Failed to load weather for ${location.name}: $e');
+
+          return LocationWeatherData(location: location, snapshot: snapshot);
+        } catch (_) {
           return null;
         }
       });
 
       final results = await Future.wait(futures);
-      final locationDataList = results.whereType<LocationWeatherData>().toList();
+      if (!mounted) return;
+      final locationDataList = results
+          .whereType<LocationWeatherData>()
+          .toList();
 
-      if (mounted && locationDataList.isNotEmpty) {
+      if (locationDataList.isNotEmpty) {
         setState(() {
           _locations = locationDataList;
           _isLoading = false;
           _locationError = null;
         });
-        
+        await _ensurePageViewState(
+          reason: 'load_all_locations_success',
+          allowRecreate: false,
+        );
+
         // Update current location in background if exists
-        final hasCurrentLocation = _locations.any((loc) => loc.location.isCurrent);
+        final hasCurrentLocation = _locations.any(
+          (loc) => loc.location.isCurrent,
+        );
         if (hasCurrentLocation) {
           _updateCurrentLocationInBackground();
         }
-      } else if (mounted && _locations.isEmpty) {
+      } else if (_locations.isEmpty) {
         // All failed, try current location
         await _loadCurrentLocationWeather();
       }
-    } catch (e) {
-      debugPrint('Error loading locations: $e');
-      if (mounted && _locations.isEmpty) {
+    } catch (_) {
+      if (!mounted) return;
+      if (_locations.isEmpty) {
         await _loadCurrentLocationWeather();
       }
     }
@@ -219,9 +389,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       // Try to show cached weather immediately
       final cachedLocation = await _locationService.getCachedLocation();
-      
-      if (cachedLocation != null && 
-          cachedLocation.latitude != null && 
+
+      if (cachedLocation != null &&
+          cachedLocation.latitude != null &&
           cachedLocation.longitude != null &&
           cachedLocation.cityName != null) {
         // Fetch cached weather without showing loading
@@ -238,8 +408,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         // No cache - need to get current location (this handles GPS errors properly)
         await _loadCurrentLocationWeather();
       }
-    } catch (e) {
-      debugPrint('Error loading cached weather: $e');
+    } catch (_) {
       // Fall back to current location which handles errors properly
       await _loadCurrentLocationWeather();
     }
@@ -248,9 +417,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _updateCurrentLocationInBackground() async {
     try {
       final locationResult = await _locationService.getCurrentLocation();
-      
-      if (locationResult.success && 
-          locationResult.latitude != null && 
+
+      if (locationResult.success &&
+          locationResult.latitude != null &&
           locationResult.longitude != null &&
           locationResult.cityName != null) {
         await _fetchWeatherForNewLocation(
@@ -267,18 +436,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _isLoading = false;
         });
       }
-    } catch (e) {
-      debugPrint('Background location update failed: $e');
-    }
+    } catch (_) {}
   }
 
   Future<void> _loadCurrentLocationWeather() async {
     try {
       if (mounted) setState(() => _isLoading = true);
-      
+
       final locationResult = await _locationService.getCurrentLocation();
-      
-      if (locationResult.success && 
+
+      if (locationResult.success &&
           locationResult.latitude != null &&
           locationResult.longitude != null &&
           locationResult.cityName != null) {
@@ -296,8 +463,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           });
         }
       }
-    } catch (e) {
-      debugPrint('Error loading current location weather: $e');
+    } catch (_) {
       if (mounted) {
         setState(() {
           _locationError = LocationResult.error('Network error occurred');
@@ -324,7 +490,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         longitude: longitude,
         locationName: cityName,
       );
-      
+
       final location = SavedLocation(
         name: cityName,
         latitude: latitude,
@@ -339,13 +505,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           cityName,
         );
       }
-      
+
       if (mounted) {
         setState(() {
           if (isCurrent) {
             // Update or add current location
-            final existingIndex = _locations.indexWhere((loc) => loc.location.isCurrent);
-            
+            final existingIndex = _locations.indexWhere(
+              (loc) => loc.location.isCurrent,
+            );
+
             if (existingIndex != -1) {
               // Update existing current location
               _locations[existingIndex] = LocationWeatherData(
@@ -354,10 +522,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               );
             } else {
               // Add new current location at start
-              _locations.insert(0, LocationWeatherData(
-                location: location,
-                snapshot: snapshot,
-              ));
+              _locations.insert(
+                0,
+                LocationWeatherData(location: location, snapshot: snapshot),
+              );
               _currentPage = 0;
               if (_pageController.hasClients) {
                 _pageController.jumpToPage(0);
@@ -365,11 +533,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             }
           } else {
             // Check if location already exists
-            final existingIndex = _locations.indexWhere((loc) =>
-              loc.location.latitude == latitude &&
-              loc.location.longitude == longitude
+            final existingIndex = _locations.indexWhere(
+              (loc) =>
+                  loc.location.latitude == latitude &&
+                  loc.location.longitude == longitude,
             );
-            
+
             if (existingIndex != -1) {
               // Update existing location
               _locations[existingIndex] = LocationWeatherData(
@@ -378,21 +547,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               );
             } else {
               // Add new location
-              _locations.add(LocationWeatherData(
-                location: location,
-                snapshot: snapshot,
-              ));
+              _locations.add(
+                LocationWeatherData(location: location, snapshot: snapshot),
+              );
             }
           }
           _isLoading = false;
           _locationError = null;
         });
-        
+        await _ensurePageViewState(
+          reason: 'fetch_weather_for_new_location',
+          allowRecreate: false,
+        );
+
         // Update weather streak
         _updateWeatherStreak(snapshot.current.weatherCode);
       }
-    } catch (e) {
-      debugPrint('Error fetching weather: $e');
+    } catch (_) {
       if (mounted && _locations.isEmpty) {
         setState(() {
           _locationError = LocationResult.error('Failed to fetch weather data');
@@ -403,12 +574,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _refreshCurrentLocation() async {
-    if (_isRefreshing) return;
-    
+    if (_isRefreshing || !mounted) return;
+
     try {
       setState(() => _isRefreshing = true);
-      
-      final currentIndex = _locations.indexWhere((loc) => loc.location.isCurrent);
+
+      final currentIndex = _locations.indexWhere(
+        (loc) => loc.location.isCurrent,
+      );
       if (currentIndex != -1) {
         await _updateCurrentLocationInBackground();
       }
@@ -425,18 +598,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (mounted) {
         setState(() => _currentStreak = streak);
       }
-    } catch (e) {
-      debugPrint('Error updating weather streak: $e');
-    }
+    } catch (_) {}
   }
 
   void _shareWeather() {
     if (_locations.isEmpty || _currentPage >= _locations.length) return;
-    
+
     final data = _locations[_currentPage];
     final snapshot = data.snapshot;
     final today = snapshot.daily.isNotEmpty ? snapshot.daily.first : null;
-    
+
     WeatherShareService.shareAsText(
       locationName: snapshot.locationName,
       temperature: snapshot.current.temperature,
@@ -458,13 +629,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     String cityName,
   ) async {
     HapticFeedback.mediumImpact();
-    
+
     // Check if location already exists
-    final existingIndex = _locations.indexWhere((loc) =>
-      loc.location.latitude == latitude &&
-      loc.location.longitude == longitude
+    final existingIndex = _locations.indexWhere(
+      (loc) =>
+          loc.location.latitude == latitude &&
+          loc.location.longitude == longitude,
     );
-    
+
     if (existingIndex != -1) {
       // Location exists, just navigate to it
       setState(() => _currentPage = existingIndex);
@@ -476,11 +648,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _showSnackBar('Switched to ${cityName}');
       return;
     }
-    
+
     // New location, fetch weather
     setState(() => _isLoading = true);
     await _fetchWeatherForNewLocation(latitude, longitude, cityName);
-    
+
     if (mounted && _locations.isNotEmpty) {
       final newIndex = _locations.length - 1;
       setState(() => _currentPage = newIndex);
@@ -494,10 +666,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _saveCurrentLocation() async {
     if (_currentPage >= _locations.length) return;
-    
+
     HapticFeedback.mediumImpact();
     final currentLocation = _locations[_currentPage].location;
-    
+
     if (currentLocation.isCurrent) {
       _showSnackBar('Current location is always available');
       return;
@@ -520,19 +692,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _deleteLocation(SavedLocation location) async {
     HapticFeedback.mediumImpact();
-    
+
     await _savedLocationsService.deleteLocation(location);
-    
+
     if (mounted) {
       setState(() {
-        final deletedIndex = _locations.indexWhere((loc) => 
-          loc.location.latitude == location.latitude &&
-          loc.location.longitude == location.longitude
+        final deletedIndex = _locations.indexWhere(
+          (loc) =>
+              loc.location.latitude == location.latitude &&
+              loc.location.longitude == location.longitude,
         );
-        
+
         if (deletedIndex != -1) {
           _locations.removeAt(deletedIndex);
-          
+
           // Adjust current page if needed
           if (_currentPage >= _locations.length && _locations.isNotEmpty) {
             _currentPage = _locations.length - 1;
@@ -542,7 +715,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               curve: Curves.easeOut,
             );
           }
-          
+
           // If no locations left, load current location
           if (_locations.isEmpty) {
             _isLoading = true;
@@ -550,7 +723,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           }
         }
       });
-      
+
       _showSnackBar('${location.name} removed');
     }
   }
@@ -560,9 +733,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       context: context,
       builder: (context) => Dialog(
         backgroundColor: const Color(0xFF0F172A),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: Container(
           padding: const EdgeInsets.all(24),
           constraints: const BoxConstraints(maxHeight: 500),
@@ -680,7 +851,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _showSnackBar(String message) {
     if (!mounted) return;
-    
+
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -708,7 +879,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _handleRefresh() async {
     if (_isRefreshing) return;
-    
+
     HapticFeedback.mediumImpact();
     setState(() => _isRefreshing = true);
     try {
@@ -721,6 +892,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _openSystemSettingsFlow({
+    required bool openLocationSettings,
+  }) async {
+    _pendingSettingsReturn = true;
+    _shouldDismissBlockingRouteOnResume = true;
+
+    final opened = openLocationSettings
+        ? await _locationService.openLocationSettings()
+        : await _locationService.openAppSettings();
+
+    if (!opened) {
+      _pendingSettingsReturn = false;
+      _shouldDismissBlockingRouteOnResume = false;
+      if (!mounted) return;
+      _showSnackBar('Could not open settings. Please open them manually.');
+      return;
+    }
+
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+
+    if (AppLifecycleService.state.value == AppLifecycleState.resumed) {
+      await _handleAppResumed();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     const backgroundColor = Color(0xFF020617);
@@ -729,63 +926,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       backgroundColor: backgroundColor,
       body: Column(
         children: [
-          ConnectivityBanner(
-            isOffline: _isOffline,
-            onRetry: _handleRefresh,
-          ),
-          Expanded(
-            child: SafeArea(
-              child: _isLoading && _locations.isEmpty
-                  ? const WeatherSkeletonLoader()
-                  : _locationError != null && _locations.isEmpty
-                      ? _buildLocationErrorState(_locationError!)
-                      : _buildSwipeableContent(),
-            ),
-          ),
+          ConnectivityBanner(isOffline: _isOffline, onRetry: _handleRefresh),
+          Expanded(child: SafeArea(child: _buildBodyContent())),
         ],
       ),
     );
   }
 
-  Widget _buildLoadingState() {
-    return const Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 60,
-            height: 60,
-            child: CircularProgressIndicator(
-              strokeWidth: 4,
-              valueColor: AlwaysStoppedAnimation(Color(0xFF38BDF8)),
-              backgroundColor: Color(0x331E293B),
-            ),
-          ),
-          SizedBox(height: 20),
-          Text(
-            'Fetching the latest weather…',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
+  Widget _buildBodyContent() {
+    if (_isLoading && _locations.isEmpty) {
+      return const WeatherSkeletonLoader();
+    }
+
+    if (_locations.isEmpty) {
+      return _buildLocationErrorState(
+        _locationError ??
+            LocationResult.error('Unable to load weather. Please try again.'),
+      );
+    }
+
+    if (!_animateIn && mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _animateIn) return;
+        setState(() => _animateIn = true);
+      });
+    }
+    return _buildSwipeableContent();
   }
 
   Widget _buildLocationErrorState(LocationResult error) {
     final isGpsDisabled = error.errorType == LocationErrorType.serviceDisabled;
-    final isPermissionDenied = error.errorType == LocationErrorType.permissionDeniedForever;
-    final showSettingsButton = isGpsDisabled || isPermissionDenied;
+    final isPermissionDenied =
+        error.errorType == LocationErrorType.permissionDenied;
+    final isPermissionDeniedForever =
+        error.errorType == LocationErrorType.permissionDeniedForever;
+    final showSettingsButton = isGpsDisabled || isPermissionDeniedForever;
+    final showGrantPermissionButton = isPermissionDenied;
 
     Future<void> openSystemSettings() async {
-      if (isGpsDisabled) {
-        await _locationService.openLocationSettings();
-      } else {
-        await _locationService.openAppSettings();
-      }
+      await _openSystemSettingsFlow(openLocationSettings: isGpsDisabled);
+    }
+
+    Future<void> requestPermissionAgain() async {
+      await _loadCurrentLocationWeather();
     }
 
     return Padding(
@@ -806,7 +989,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               borderRadius: BorderRadius.circular(28),
             ),
             child: Icon(
-              isGpsDisabled ? Icons.gps_off_rounded : Icons.location_off_rounded,
+              isGpsDisabled
+                  ? Icons.gps_off_rounded
+                  : Icons.location_off_rounded,
               color: const Color(0xFF38BDF8),
               size: 42,
             ),
@@ -815,12 +1000,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           Text(
             isGpsDisabled ? 'GPS is Turned Off' : 'Location Access Needed',
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 16),
-          
+
           // Step-by-step instructions for GPS disabled
           if (isGpsDisabled) ...[
             Container(
@@ -828,15 +1013,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.05),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: Colors.white.withOpacity(0.1),
-                ),
+                border: Border.all(color: Colors.white.withOpacity(0.1)),
               ),
               child: Column(
                 children: [
                   _buildInstructionStep('1', 'Tap "Enable GPS" button below'),
                   const SizedBox(height: 12),
-                  _buildInstructionStep('2', 'Turn on Location/GPS in settings'),
+                  _buildInstructionStep(
+                    '2',
+                    'Turn on Location/GPS in settings',
+                  ),
                   const SizedBox(height: 12),
                   _buildInstructionStep('3', 'Return to Auroclime'),
                   const SizedBox(height: 12),
@@ -866,21 +1052,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ] else ...[
             Text(
               error.errorMessage ?? 'Unable to determine your location.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.white70,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: Colors.white70),
               textAlign: TextAlign.center,
             ),
           ],
-          
+
           const SizedBox(height: 28),
-          
+
           // Main action button
-          if (showSettingsButton)
+          if (showSettingsButton || showGrantPermissionButton)
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: openSystemSettings,
+                onPressed: showGrantPermissionButton
+                    ? requestPermissionAgain
+                    : openSystemSettings,
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF38BDF8),
                   padding: const EdgeInsets.symmetric(vertical: 16),
@@ -889,11 +1077,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                 ),
                 icon: Icon(
-                  isGpsDisabled ? Icons.gps_fixed : Icons.settings,
+                  showGrantPermissionButton
+                      ? Icons.my_location
+                      : (isGpsDisabled ? Icons.gps_fixed : Icons.settings),
                   size: 20,
                 ),
                 label: Text(
-                  isGpsDisabled ? 'Enable GPS' : 'Open App Settings',
+                  showGrantPermissionButton
+                      ? 'Grant Permission'
+                      : (isGpsDisabled ? 'Enable GPS' : 'Open App Settings'),
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 16,
@@ -901,9 +1093,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
-          
+
           const SizedBox(height: 12),
-          
+
           // Retry button
           SizedBox(
             width: double.infinity,
@@ -924,9 +1116,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           // Manual location option
           TextButton(
             onPressed: () => Navigator.pushNamed(context, '/search'),
@@ -968,10 +1160,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         Expanded(
           child: Text(
             text,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-            ),
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ),
       ],
@@ -980,8 +1169,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildSwipeableContent() {
     if (_locations.isEmpty) {
-      return const SizedBox.shrink();
+      return _buildLocationErrorState(
+        _locationError ??
+            LocationResult.error('Unable to load weather. Please try again.'),
+      );
     }
+
+    final safeIndex = _safeCurrentPageIndex();
+    if (safeIndex != _currentPage) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        await _ensurePageViewState(
+          reason: 'build_swipeable_content_clamp',
+          allowRecreate: false,
+        );
+      });
+    }
+
+    _schedulePageViewSync(
+      reason: 'build_swipeable_content_sync',
+      allowRecreate: true,
+    );
 
     return Stack(
       children: [
@@ -993,6 +1201,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           },
           itemCount: _locations.length,
           itemBuilder: (context, index) {
+            if (index < 0 || index >= _locations.length) {
+              return _buildPagePlaceholder(
+                message: 'Preparing weather content for this location...',
+              );
+            }
             return _buildWeatherPage(_locations[index]);
           },
         ),
@@ -1025,12 +1238,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildWeatherPage(LocationWeatherData data) {
+    final isVisible = _animateIn || _locations.isNotEmpty;
+    final effectiveOpacity = isVisible ? 1.0 : 0.0;
+
     return AnimatedSlide(
-      offset: _animateIn ? Offset.zero : const Offset(0, 0.05),
+      offset: isVisible ? Offset.zero : const Offset(0, 0.05),
       duration: const Duration(milliseconds: 600),
       curve: Curves.easeOutCubic,
       child: AnimatedOpacity(
-        opacity: _animateIn ? 1 : 0,
+        opacity: effectiveOpacity,
         duration: const Duration(milliseconds: 600),
         child: RefreshIndicator(
           onRefresh: _handleRefresh,
@@ -1055,7 +1271,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     lastUpdatedText: data.snapshot.lastUpdatedText,
                     onSettingsChanged: _onSettingsChanged,
                     onLocationSelected: _onLocationSelected,
-                    showDeleteButton: !data.location.isCurrent && _locations.length > 1,
+                    showDeleteButton:
+                        !data.location.isCurrent && _locations.length > 1,
                     onDelete: () => _deleteLocation(data.location),
                     onShare: _shareWeather,
                   ),
@@ -1077,20 +1294,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   windSpeedUnit: _windSpeedUnit,
                 ),
                 const SizedBox(height: 16),
-                
+
                 // 2. Weather Streak (if exists)
                 if (_currentStreak != null && _currentStreak!.hasStreak) ...[
                   WeatherStreakCard(streak: _currentStreak!),
                   const SizedBox(height: 16),
                 ],
-                
+
                 // 3. Feels Different Card
                 FeelsDifferentCard(
                   actualTemp: data.snapshot.current.temperature,
                   feelsLikeTemp: data.snapshot.current.feelsLike,
                 ),
                 const SizedBox(height: 16),
-                
+
                 // 4. Auroclime Tips
                 AuroclimeTipCard(tip: data.snapshot.tip),
                 const SizedBox(height: 16),
@@ -1103,25 +1320,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   _buildNoAQICard(),
                   const SizedBox(height: 16),
                 ],
-                
+
                 // 4. UV Index Card
                 UVIndexCard(uvIndex: data.snapshot.current.uvIndex),
                 const SizedBox(height: 16),
-                
+
                 // 5. Weather Details Card (expandable)
                 WeatherDetailsCard(
                   visibility: data.snapshot.current.visibility,
                   pressure: data.snapshot.current.pressure,
                   dewPoint: data.snapshot.current.dewPoint,
-                  sunrise: data.snapshot.daily.isNotEmpty ? data.snapshot.daily.first.sunrise : null,
-                  sunset: data.snapshot.daily.isNotEmpty ? data.snapshot.daily.first.sunset : null,
+                  sunrise: data.snapshot.daily.isNotEmpty
+                      ? data.snapshot.daily.first.sunrise
+                      : null,
+                  sunset: data.snapshot.daily.isNotEmpty
+                      ? data.snapshot.daily.first.sunset
+                      : null,
                 ),
                 const SizedBox(height: 24),
-                
+
                 // 6. Temperature Chart
                 TemperatureChart(hourlyData: data.snapshot.hourly),
                 const SizedBox(height: 16),
-                
+
                 // 7. Precipitation Chart
                 PrecipitationChart(hourlyData: data.snapshot.hourly),
                 const SizedBox(height: 24),
@@ -1150,6 +1371,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPagePlaceholder({required String message}) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 36,
+              height: 36,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                valueColor: AlwaysStoppedAnimation(Color(0xFF38BDF8)),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1188,11 +1440,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Icon(
-              Icons.air,
-              color: Color(0xFF38BDF8),
-              size: 28,
-            ),
+            child: const Icon(Icons.air, color: Color(0xFF38BDF8), size: 28),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -1249,10 +1497,7 @@ class _SectionTitle extends StatelessWidget {
   final String title;
   final String subtitle;
 
-  const _SectionTitle({
-    required this.title,
-    required this.subtitle,
-  });
+  const _SectionTitle({required this.title, required this.subtitle});
 
   @override
   Widget build(BuildContext context) {
@@ -1262,15 +1507,15 @@ class _SectionTitle extends StatelessWidget {
         Text(
           title,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         Text(
           subtitle,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.white38,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.white38),
         ),
       ],
     );
@@ -1281,8 +1526,5 @@ class LocationWeatherData {
   final SavedLocation location;
   final UIWeatherSnapshot snapshot;
 
-  LocationWeatherData({
-    required this.location,
-    required this.snapshot,
-  });
+  LocationWeatherData({required this.location, required this.snapshot});
 }

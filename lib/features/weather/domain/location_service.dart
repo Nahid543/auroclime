@@ -7,11 +7,48 @@ class LocationService {
   static const String _lonKey = 'cached_longitude';
   static const String _cityKey = 'cached_city_name';
 
+  Future<LocationResult?> getLocationReadiness() async {
+    try {
+      final isServiceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!isServiceEnabled) {
+        return LocationResult.serviceDisabled();
+      }
+
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        return LocationResult.permissionDenied();
+      }
+      if (permission == LocationPermission.deniedForever) {
+        return LocationResult.permissionDeniedForever();
+      }
+
+      return null;
+    } catch (_) {
+      return LocationResult.error('Unable to validate location settings');
+    }
+  }
+
+  Future<LocationStatusSnapshot> getLocationStatusSnapshot() async {
+    try {
+      final isServiceEnabled = await Geolocator.isLocationServiceEnabled();
+      final permission = await Geolocator.checkPermission();
+      return LocationStatusSnapshot(
+        isServiceEnabled: isServiceEnabled,
+        permission: permission,
+      );
+    } catch (_) {
+      return const LocationStatusSnapshot(
+        isServiceEnabled: false,
+        permission: LocationPermission.unableToDetermine,
+      );
+    }
+  }
+
   Future<LocationResult> getCurrentLocation() async {
     try {
       // Check and request permission FIRST (before checking if service is enabled)
       LocationPermission permission = await Geolocator.checkPermission();
-      
+
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
@@ -39,7 +76,10 @@ class LocationService {
         timeLimit: const Duration(seconds: 5),
       );
 
-      final cityName = await _getCityName(position.latitude, position.longitude);
+      final cityName = await _getCityName(
+        position.latitude,
+        position.longitude,
+      );
 
       await _cacheLocation(position.latitude, position.longitude, cityName);
 
@@ -102,12 +142,20 @@ class LocationService {
     return null;
   }
 
-  Future<void> openLocationSettings() async {
-    await Geolocator.openLocationSettings();
+  Future<bool> openLocationSettings() async {
+    try {
+      return await Geolocator.openLocationSettings();
+    } catch (_) {
+      return false;
+    }
   }
 
-  Future<void> openAppSettings() async {
-    await Geolocator.openAppSettings();
+  Future<bool> openAppSettings() async {
+    try {
+      return await Geolocator.openAppSettings();
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> clearCache() async {
@@ -153,7 +201,8 @@ class LocationResult {
   factory LocationResult.serviceDisabled() {
     return LocationResult._(
       success: false,
-      errorMessage: 'Location services are disabled. Please enable GPS in settings.',
+      errorMessage:
+          'Location services are disabled. Please enable GPS in settings.',
       errorType: LocationErrorType.serviceDisabled,
     );
   }
@@ -161,7 +210,8 @@ class LocationResult {
   factory LocationResult.permissionDenied() {
     return LocationResult._(
       success: false,
-      errorMessage: 'Location permission denied. Please grant permission to use this app.',
+      errorMessage:
+          'Location permission denied. Please grant permission to use this app.',
       errorType: LocationErrorType.permissionDenied,
     );
   }
@@ -169,7 +219,8 @@ class LocationResult {
   factory LocationResult.permissionDeniedForever() {
     return LocationResult._(
       success: false,
-      errorMessage: 'Location permission permanently denied. Please enable in app settings.',
+      errorMessage:
+          'Location permission permanently denied. Please enable in app settings.',
       errorType: LocationErrorType.permissionDeniedForever,
     );
   }
@@ -188,4 +239,14 @@ enum LocationErrorType {
   permissionDenied,
   permissionDeniedForever,
   unknown,
+}
+
+class LocationStatusSnapshot {
+  final bool isServiceEnabled;
+  final LocationPermission permission;
+
+  const LocationStatusSnapshot({
+    required this.isServiceEnabled,
+    required this.permission,
+  });
 }
