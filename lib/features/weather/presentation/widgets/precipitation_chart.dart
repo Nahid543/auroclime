@@ -6,10 +6,7 @@ import '../../domain/weather_service.dart';
 class PrecipitationChart extends StatelessWidget {
   final List<UIHourlyWeather> hourlyData;
 
-  const PrecipitationChart({
-    super.key,
-    required this.hourlyData,
-  });
+  const PrecipitationChart({super.key, required this.hourlyData});
 
   @override
   Widget build(BuildContext context) {
@@ -30,10 +27,7 @@ class PrecipitationChart extends StatelessWidget {
                   const Color(0xFF1E1E1E).withOpacity(0.7),
                   const Color(0xFF2D2D2D).withOpacity(0.5),
                 ]
-              : [
-                  Colors.white.withOpacity(0.9),
-                  Colors.white.withOpacity(0.7),
-                ],
+              : [Colors.white.withOpacity(0.9), Colors.white.withOpacity(0.7)],
         ),
         borderRadius: BorderRadius.circular(24),
         border: Border.all(
@@ -77,10 +71,7 @@ class PrecipitationChart extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 20),
-              SizedBox(
-                height: 180,
-                child: _buildChart(isDark),
-              ),
+              SizedBox(height: 180, child: _buildChart(isDark)),
             ],
           ),
         ),
@@ -95,7 +86,7 @@ class PrecipitationChart extends StatelessWidget {
     final barGroups = data.asMap().entries.map((entry) {
       final index = entry.key;
       final value = entry.value.rainChance.toDouble();
-      
+
       // Color intensity based on probability
       Color barColor;
       if (value < 20) {
@@ -123,16 +114,11 @@ class PrecipitationChart extends StatelessWidget {
             toY: value,
             color: barColor,
             width: 8,
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(4),
-            ),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
             gradient: LinearGradient(
               begin: Alignment.bottomCenter,
               end: Alignment.topCenter,
-              colors: [
-                barColor.withOpacity(0.7),
-                barColor,
-              ],
+              colors: [barColor.withOpacity(0.7), barColor],
             ),
           ),
         ],
@@ -188,7 +174,9 @@ class PrecipitationChart extends StatelessWidget {
               getTitlesWidget: (value, meta) {
                 final index = value.toInt();
                 if (index < 0 || index >= data.length) return const SizedBox();
-                
+                if (index % 4 != 0)
+                  return const SizedBox(); // Force skip every 4 hours
+
                 return Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
@@ -214,7 +202,7 @@ class PrecipitationChart extends StatelessWidget {
             getTooltipItem: (group, groupIndex, rod, rodIndex) {
               final index = group.x.toInt();
               if (index < 0 || index >= data.length) return null;
-              
+
               return BarTooltipItem(
                 '${data[index].timeLabel}\n${rod.toY.round()}%',
                 TextStyle(

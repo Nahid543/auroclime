@@ -1,0 +1,37 @@
+Auroclime Project - Important Structure Overview
+===============================================
+
+This project follows a standard Flutter feature-based architecture. 
+Note: There is a redundant "auroclime/" folder that appears to be a mirror of the root files.
+
+Main Directories:
+-----------------
+/lib
+  ├── main.dart             # Entry point of the application
+  ├── app/                  # App-wide configuration and root widget
+  ├── core/                 # Shared themes, utilities, and constants
+  └── features/             # Logical features of the app
+      └── weather/          # Weather feature implementation
+          ├── data/         # API clients (Open-Meteo, Air Quality) and models
+          ├── domain/       # Services (Location, Connectivity, Weather)
+          └── presentation/ # UI components (Screens and Widgets)
+
+/assets
+  └── (Images and icons used in the app)
+
+/test
+  └── (Unit and widget tests)
+
+Platform Folders:
+-----------------
+/android                    # Android-specific code and configuration
+/ios                        # iOS-specific code and configuration
+/web                        # Web-specific files (index.html, manifest.json)
+/windows, /macos, /linux    # Desktop platform-specific files
+
+Important Files:
+----------------
+pubspec.yaml                # Project dependencies and assets configuration
+analysis_options.yaml       # Dart linting rules
+README.md                   # Project documentation
+.vscode/settings.json       # Workspace-specific settings (including Flutter SDK path)
