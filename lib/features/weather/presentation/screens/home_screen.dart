@@ -20,6 +20,7 @@ import '../widgets/uv_index_card.dart';
 import '../widgets/weather_details_card.dart';
 import '../widgets/temperature_chart.dart';
 import '../widgets/precipitation_chart.dart';
+import '../widgets/radar_preview_card.dart';
 import '../widgets/weather_streak_card.dart';
 import '../widgets/feels_different_card.dart';
 import '../../domain/weather_streak_service.dart';
@@ -1345,6 +1346,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 // 7. Precipitation Chart
                 PrecipitationChart(hourlyData: data.snapshot.hourly),
+                const SizedBox(height: 16),
+
+                // 8. Weather Radar Preview
+                RadarPreviewCard(
+                  latitude: data.location.latitude,
+                  longitude: data.location.longitude,
+                  locationName: data.snapshot.locationName,
+                ),
                 const SizedBox(height: 24),
                 const _SectionTitle(
                   title: 'Next hours',
