@@ -57,6 +57,9 @@ class WeatherSnapshot {
         precipitationProbability:
             (hourlyJson['precipitation_probability'][index] as num)
                 .toInt(),
+        weatherCode: hourlyJson['weathercode']?[index] != null
+            ? (hourlyJson['weathercode'][index] as num).toInt()
+            : 0,
         apparentTemperature: hourlyJson['apparent_temperature']?[index] != null
             ? (hourlyJson['apparent_temperature'][index] as num).toDouble()
             : null,
@@ -72,13 +75,35 @@ class WeatherSnapshot {
       );
     });
 
+    // Parse current conditions - API returns 'current' instead of 'current_weather' when using 'current:' parameter
+    final currentConditionJson = json['current'] != null
+        ? Map<String, dynamic>.from(json['current'] as Map)
+        : Map<String, dynamic>.from(json['current_weather'] as Map);
+    
+    // Find matching hour to populate extra fields not in current weather
+    try {
+      final currentTimeStr = currentConditionJson['time'] as String;
+      final currentTime = DateTime.parse(currentTimeStr);
+      final index = hourly.indexWhere((h) => 
+          h.time.year == currentTime.year && 
+          h.time.month == currentTime.month && 
+          h.time.day == currentTime.day && 
+          h.time.hour == currentTime.hour);
+          
+      if (index != -1) {
+        currentConditionJson['uv_index'] = hourly[index].uvIndex;
+        currentConditionJson['visibility'] = hourly[index].visibility;
+        currentConditionJson['surface_pressure'] = hourlyJson['surface_pressure']?[index];
+        currentConditionJson['dewpoint_2m'] = hourlyJson['dewpoint_2m']?[index];
+        currentConditionJson['apparent_temperature'] = hourly[index].apparentTemperature;
+      }
+    } catch (_) {}
+
     return WeatherSnapshot(
       latitude: (json['latitude'] as num).toDouble(),
       longitude: (json['longitude'] as num).toDouble(),
       timezone: json['timezone'] as String,
-      current: CurrentConditions.fromJson(
-        json['current_weather'] as Map<String, dynamic>,
-      ),
+      current: CurrentConditions.fromJson(currentConditionJson),
       hourly: hourly,
       daily: daily,
     );
@@ -94,6 +119,7 @@ class CurrentConditions {
     required this.windDirection,
     required this.weatherCode,
     required this.isDay,
+    this.humidity,
     this.apparentTemperature,
     this.uvIndex,
     this.visibility,
@@ -107,6 +133,7 @@ class CurrentConditions {
   final double windDirection;
   final int weatherCode;
   final bool isDay;
+  final int? humidity;
   final double? apparentTemperature;
   final double? uvIndex;
   final double? visibility;
@@ -116,11 +143,14 @@ class CurrentConditions {
   factory CurrentConditions.fromJson(Map<String, dynamic> json) {
     return CurrentConditions(
       time: DateTime.parse(json['time'] as String),
-      temperature: (json['temperature'] as num).toDouble(),
-      windSpeed: (json['windspeed'] as num).toDouble(),
-      windDirection: (json['winddirection'] as num).toDouble(),
+      temperature: (json['temperature_2m'] as num).toDouble(),
+      windSpeed: (json['wind_speed_10m'] as num).toDouble(),
+      windDirection: (json['wind_direction_10m'] as num).toDouble(),
       weatherCode: json['weathercode'] as int,
       isDay: (json['is_day'] as num) == 1,
+      humidity: json['relative_humidity_2m'] != null
+          ? (json['relative_humidity_2m'] as num).toInt()
+          : null,
       apparentTemperature: json['apparent_temperature'] != null
           ? (json['apparent_temperature'] as num).toDouble()
           : null,
@@ -145,6 +175,7 @@ class HourlyForecast {
     required this.time,
     required this.temperature,
     required this.precipitationProbability,
+    required this.weatherCode,
     this.apparentTemperature,
     this.uvIndex,
     this.visibility,
@@ -154,6 +185,7 @@ class HourlyForecast {
   final DateTime time;
   final double temperature;
   final int precipitationProbability;
+  final int weatherCode;
   final double? apparentTemperature;
   final double? uvIndex;
   final double? visibility;

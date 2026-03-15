@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../domain/settings_service.dart';
 import '../../domain/location_service.dart';
+import '../../domain/widget_service.dart';
 import 'notification_settings_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -142,14 +143,84 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     )
                   : SingleChildScrollView(
                       physics: const BouncingScrollPhysics(),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: horizontalPadding,
-                        vertical: 8,
+                      padding: EdgeInsets.only(
+                        left: horizontalPadding,
+                        right: horizontalPadding,
+                        top: 8,
+                        bottom: 120, // Pad for floating nav bar
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _SectionHeader(title: 'Preferences'),
+                          _SectionHeader(title: 'Widgets'),
+                          const SizedBox(height: 12),
+                          _SettingsCard(
+                            child: _SettingsTile(
+                              icon: Icons.widgets_outlined,
+                              title: 'Add to Home Screen',
+                              subtitle: 'Pin the weather widget to your launcher',
+                              trailing: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(20),
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      const Color(0xFF38BDF8).withOpacity(0.2),
+                                      const Color(0xFF6366F1).withOpacity(0.2),
+                                    ],
+                                  ),
+                                ),
+                                child: const Text(
+                                  'ADD',
+                                  style: TextStyle(
+                                    color: Color(0xFF38BDF8),
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                              onTap: () async {
+                                final success = await WidgetService.requestPinWidget();
+                                if (mounted) {
+                                  if (!success) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: const Text(
+                                          'Your launcher does not support in-app widget pinning. Please add it manually from your home screen.',
+                                        ),
+                                        backgroundColor: Colors.redAccent.shade700,
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        margin: const EdgeInsets.all(16),
+                                      ),
+                                    );
+                                  } else {
+                                    // Success case: The intent was sent.
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: const Text(
+                                          'Widget added! Check your home screen.\n(If it didn\'t appear, your launcher may require "Home screen shortcuts" permission in App Settings.)',
+                                        ),
+                                        backgroundColor: const Color(0xFF10B981), // Green for success
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        margin: const EdgeInsets.all(16),
+                                        duration: const Duration(seconds: 5),
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 24),
                           const SizedBox(height: 12),
                           _SettingsCard(
                             child: Column(
@@ -276,7 +347,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               },
                             ),
                           ),
-                          const SizedBox(height: 24),
+                          _SectionHeader(title: 'Preferences'),
                           _SectionHeader(title: 'About Auroclime'),
                           const SizedBox(height: 12),
                           _SettingsCard(

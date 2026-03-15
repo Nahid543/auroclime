@@ -20,20 +20,21 @@ import '../widgets/uv_index_card.dart';
 import '../widgets/weather_details_card.dart';
 import '../widgets/temperature_chart.dart';
 import '../widgets/precipitation_chart.dart';
-import '../widgets/radar_preview_card.dart';
+import '../widgets/sunrise_sunset_card.dart';
 import '../widgets/weather_streak_card.dart';
 import '../widgets/feels_different_card.dart';
 import '../../domain/weather_streak_service.dart';
 import '../../domain/weather_share_service.dart';
+import '../../domain/widget_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> {
   final _weatherService = WeatherService();
   final _locationService = LocationService();
   final _settingsService = SettingsService();
@@ -110,6 +111,50 @@ class _HomeScreenState extends State<HomeScreen> {
     final previous = _pageController;
     _pageController = PageController(initialPage: initialPage);
     previous.dispose();
+  }
+
+  void scrollToSavedLocation(SavedLocation loc) async {
+    if (_locations.isEmpty) {
+      await _fetchWeatherForNewLocation(loc.latitude, loc.longitude, loc.name);
+      return;
+    }
+
+    final index = _locations.indexWhere((l) =>
+        l.location.latitude == loc.latitude &&
+        l.location.longitude == loc.longitude);
+
+    if (index != -1 && mounted) {
+      setState(() {
+        _currentPage = index;
+      });
+      if (_pageController.hasClients) {
+        _pageController.animateToPage(
+          index,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        );
+      }
+    } else {
+      // It's a newly saved location not yet loaded into memory
+      await _fetchWeatherForNewLocation(loc.latitude, loc.longitude, loc.name);
+      if (mounted) {
+        final newIndex = _locations.indexWhere((l) =>
+            l.location.latitude == loc.latitude &&
+            l.location.longitude == loc.longitude);
+        if (newIndex != -1) {
+          setState(() {
+            _currentPage = newIndex;
+          });
+          if (_pageController.hasClients) {
+            _pageController.animateToPage(
+              newIndex,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          }
+        }
+      }
+    }
   }
 
   Future<void> _ensurePageViewState({
@@ -367,6 +412,17 @@ class _HomeScreenState extends State<HomeScreen> {
           allowRecreate: false,
         );
 
+        // Push latest data to the Android home screen widget
+        // Prefer current location if available, otherwise use the first location
+        final locationToShow = _locations.firstWhere(
+          (loc) => loc.location.isCurrent,
+          orElse: () => _locations.first,
+        );
+        WidgetService.updateWidget(
+          locationToShow.snapshot,
+          _temperatureUnit,
+        );
+
         // Update current location in background if exists
         final hasCurrentLocation = _locations.any(
           (loc) => loc.location.isCurrent,
@@ -563,6 +619,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
         // Update weather streak
         _updateWeatherStreak(snapshot.current.weatherCode);
+
+        // Push latest data to the Android home screen widget
+        WidgetService.updateWidget(snapshot, _temperatureUnit);
       }
     } catch (_) {
       if (mounted && _locations.isEmpty) {
@@ -1119,18 +1178,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
 
           const SizedBox(height: 24),
-
-          // Manual location option
-          TextButton(
-            onPressed: () => Navigator.pushNamed(context, '/search'),
-            child: const Text(
-              'Or enter location manually',
-              style: TextStyle(
-                color: Colors.white54,
-                decoration: TextDecoration.underline,
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -1257,9 +1304,11 @@ class _HomeScreenState extends State<HomeScreen> {
             physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics(),
             ),
-            padding: EdgeInsets.symmetric(
-              horizontal: MediaQuery.of(context).size.width * 0.04,
-              vertical: 20,
+            padding: EdgeInsets.only(
+              left: MediaQuery.of(context).size.width * 0.04,
+              right: MediaQuery.of(context).size.width * 0.04,
+              top: 20,
+              bottom: 120, // Pad for floating nav bar
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1270,7 +1319,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     locationName: data.snapshot.locationName,
                     dateText: data.snapshot.dateText,
                     lastUpdatedText: data.snapshot.lastUpdatedText,
-                    onSettingsChanged: _onSettingsChanged,
                     onLocationSelected: _onLocationSelected,
                     showDeleteButton:
                         !data.location.isCurrent && _locations.length > 1,
@@ -1326,17 +1374,22 @@ class _HomeScreenState extends State<HomeScreen> {
                 UVIndexCard(uvIndex: data.snapshot.current.uvIndex),
                 const SizedBox(height: 16),
 
-                // 5. Weather Details Card (expandable)
-                WeatherDetailsCard(
-                  visibility: data.snapshot.current.visibility,
-                  pressure: data.snapshot.current.pressure,
-                  dewPoint: data.snapshot.current.dewPoint,
+                // Sunrise & Sunset Card
+                SunriseSunsetCard(
                   sunrise: data.snapshot.daily.isNotEmpty
                       ? data.snapshot.daily.first.sunrise
                       : null,
                   sunset: data.snapshot.daily.isNotEmpty
                       ? data.snapshot.daily.first.sunset
                       : null,
+                ),
+                const SizedBox(height: 16),
+
+                // 5. Weather Details Card (expandable)
+                WeatherDetailsCard(
+                  visibility: data.snapshot.current.visibility,
+                  pressure: data.snapshot.current.pressure,
+                  dewPoint: data.snapshot.current.dewPoint,
                 ),
                 const SizedBox(height: 24),
 
@@ -1346,14 +1399,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 // 7. Precipitation Chart
                 PrecipitationChart(hourlyData: data.snapshot.hourly),
-                const SizedBox(height: 16),
-
-                // 8. Weather Radar Preview
-                RadarPreviewCard(
-                  latitude: data.location.latitude,
-                  longitude: data.location.longitude,
-                  locationName: data.snapshot.locationName,
-                ),
                 const SizedBox(height: 24),
                 const _SectionTitle(
                   title: 'Next hours',

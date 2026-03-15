@@ -75,29 +75,29 @@ class AuroclimeTipEngine {
   }) {
     if (weatherCode >= 95) {
       if (weatherCode == 99) {
-        return 'Severe thunderstorm with hail. Stay indoors and avoid windows.';
+        return '🚨 Severe thunderstorm with hail! Stay indoors, away from windows, and secure outdoor items.';
       }
       if (weatherCode == 96) {
-        return 'Thunderstorm with hail possible. Move indoors and secure loose items.';
+        return '⚠️ Thunderstorm with scattered hail possible. Move indoors and stay safe until it passes.';
       }
-      return 'Thunderstorm nearby. Avoid open areas and unplug sensitive electronics.';
+      return '⛈️ Thunderstorms in the vicinity. Avoid open areas and consider unplugging sensitive electronics.';
     }
 
     if ((weatherCode >= 56 && weatherCode <= 57) ||
         (weatherCode >= 66 && weatherCode <= 67)) {
-      return 'Freezing precipitation possible. Roads and sidewalks may be icy—travel with caution.';
+      return '🧊 Freezing precipitation likely! Roads and sidewalks will be extremely slippery. Travel only if necessary.';
     }
 
     if (weatherCode == 75 || weatherCode == 77 || weatherCode == 85 || weatherCode == 86) {
-      return 'Heavy snow or blowing snow. Allow extra travel time and dress warmly.';
+      return '❄️ Heavy snowfall expected. Bundle up, drive slowly, and allow extra time for travel.';
     }
 
     if (apparent <= -20) {
-      return 'Extreme cold. Limit time outside and cover exposed skin.';
+      return '🥶 Dangerously cold outside! Risk of frostbite is high. Limit exposure and cover all skin.';
     }
 
-    if (temperature >= 38) {
-      return 'Extreme heat. Stay hydrated, avoid midday sun, and check on vulnerable people.';
+    if (temperature >= 38 || apparent >= 40) {
+      return '🔥 Extreme heat warning! Stay in air conditioning, hydrate constantly, and avoid midday sun.';
     }
 
     return null;
@@ -120,67 +120,66 @@ class AuroclimeTipEngine {
     required int rainProbability,
     required bool isDay,
   }) {
-    // Get current hour for time-based tips
     final hour = DateTime.now().hour;
     final timeOfDay = _getTimeOfDay(hour);
     
     // HIGH PRIORITY: Rain/Weather conditions
     if (rainProbability > 60) {
       return timeOfDay == 'morning'
-          ? 'Heavy rain expected today. Keep an umbrella and plan for delays.'
-          : 'Heavy rain likely. Stay indoors or wear waterproof gear.';
+          ? '☔ High chance of heavy rain today! Don\'t forget your umbrella and plan for slower traffic.'
+          : '☔ Heavy rain is likely. Perfect time to stay indoors with a hot beverage.';
     }
     if (rainProbability > 30) {
       return timeOfDay == 'morning'
-          ? 'Rain possible today. Carry an umbrella just in case.'
-          : 'Chance of rain. Keep an umbrella handy.';
+          ? '🌧️ Rain is quite possible today! Keep a compact umbrella handy just in case.'
+          : '🌧️ There\'s a chance of scattered showers. Better to be prepared if you\'re heading out.';
     }
 
     // EXTREME CONDITIONS
     if (temperature > 32 && humidity > 70) {
-      return 'Hot and humid—stay hydrated, seek air conditioning, and avoid strenuous activity.';
+      return '🥵 It\'s hot and very humid out there! Take it easy, seek shade, and keep a water bottle nearby.';
     }
 
     if (temperature > 35) {
       return timeOfDay == 'afternoon'
-          ? 'Extreme heat! Stay indoors during peak hours. Drink plenty of water.'
-          : 'Extreme heat today. Avoid midday sun and stay well-hydrated.';
+          ? '☀️ The sun is blazing! Stay indoors during peak hours to avoid heat exhaustion.'
+          : '☀️ It\'s going to be a scorcher! Wear light, breathable clothing and hydrate frequently.';
     }
 
     if (temperature > 30) {
       return timeOfDay == 'morning'
-          ? 'Hot day ahead! Wear light clothing, apply sunscreen, and stay cool.'
-          : 'Warm weather. Take breaks in shade and drink water frequently.';
+          ? '🕶️ A hot day is brewing! Apply sunscreen generously before stepping outside.'
+          : '🕶️ It\'s quite warm! Take frequent breaks in the shade if you\'re active outdoors.';
     }
 
     if (temperature < 5) {
-      return 'Very cold! Dress in layers, cover extremities, and limit outdoor time.';
+      return '🧣 Bitterly cold! Opt for thermal layers, a thick coat, and a warm hat if venturing out.';
     }
 
     if (temperature < 10) {
       return timeOfDay == 'morning'
-          ? 'Cold morning. Wear warm layers and don\'t forget gloves and a scarf.'
-          : 'Cold outside. Bundle up with warm clothing before heading out.';
+          ? '🧤 Chilly start to the day! A warm jacket and a hot coffee are highly recommended.'
+          : '🧤 It\'s quite brisk outside! Make sure you\'re bundled up to stay comfortable.';
     }
 
     if (temperature < 15) {
       return timeOfDay == 'evening'
-          ? 'Chilly evening ahead. Bring a jacket if going out tonight.'
-          : 'Cool conditions. Layer up and keep a jacket nearby.';
+          ? '🧥 The temperature is dropping tonight. Bring a light jacket or sweater if going out.'
+          : '🧥 Cool and crisp weather! Perfect for a light layer to keep the chill away.';
     }
 
     // WIND
     if (windSpeed > 25) {
-      return 'Strong winds today. Secure loose items and be cautious while driving.';
+      return '🌬️ Very gusty out there! Keep a firm grip on your belongings and drive carefully.';
     }
 
     if (windSpeed > 15) {
-      return 'Breezy conditions. Hold onto your hat and secure outdoor furniture.';
+      return '🍃 It\'s quite breezy! A great day for flying a kite, but maybe hold onto your hat.';
     }
 
     // HUMIDITY
     if (humidity > 80) {
-      return 'High humidity—you\'ll feel warmer than the temperature suggests. Stay cool!';
+      return '💧 The air is thick with humidity! It might feel muggier than the actual temperature.';
     }
 
     // PERFECT WEATHER
@@ -189,51 +188,51 @@ class AuroclimeTipEngine {
         humidity < 70 &&
         rainProbability < 20) {
       if (timeOfDay == 'morning') {
-        return 'Perfect weather today! Great for outdoor exercise or a morning walk.';
+        return '✨ the weather is absolutely perfect right now! Get out there and enjoy a beautiful morning walk.';
       } else if (timeOfDay == 'afternoon') {
-        return 'Beautiful afternoon! Ideal for outdoor activities or enjoying nature.';
+        return '✨ Gorgeous weather this afternoon! Excellent conditions for an outdoor lunch or a park visit.';
       } else if (timeOfDay == 'evening') {
-        return 'Lovely evening ahead. Perfect for a relaxing walk or outdoor dinner.';
+        return '✨ A beautiful, clear evening awaits! Perfect template for an outdoor dinner or stroll.';
       }
-      return 'Excellent weather conditions. Perfect day to be outside!';
+      return '✨ Spectacular weather conditions! It doesn\'t get much better than this.';
     }
 
     // TIME-SPECIFIC TIPS
     if (timeOfDay == 'morning') {
       if (temperature >= 18 && temperature <= 25) {
-        return 'Pleasant morning! Perfect temperature for a energizing walk or jog.';
+        return '🌅 Pleasant morning vibes! The temperature is exactly right for an energizing jog.';
       }
-      return 'Good morning! Check hourly forecast to plan your day ahead.';
+      return '🌅 Good morning! A relatively calm day ahead. Check the hourly forecast if you plan to be out long.';
     }
 
     if (timeOfDay == 'afternoon') {
       if (temperature >= 22 && temperature <= 30) {
-        return 'Nice afternoon weather. Great time to run errands or take a break outside.';
+        return '😎 Comfortable afternoon weather! Take a quick 10-minute break outside to soak it in.';
       }
-      return 'Check UV index before spending extended time outdoors this afternoon.';
+      return '😎 Standard afternoon weather. If you\'re out in the sun, remember your sunglasses!';
     }
 
     if (timeOfDay == 'evening') {
       if (temperature >= 15 && temperature <= 25) {
-        return 'Comfortable evening temperature. Perfect for outdoor activities after work.';
+        return '🌆 A lovely, mild evening. Ideal conditions to unwind and take a relaxing stroll.';
       }
-      return 'Evening is approaching. Check tonight\'s forecast and plan accordingly.';
+      return '🌆 The day is winding down! Check tonight\'s forecast before making late plans.';
     }
 
     if (timeOfDay == 'night') {
       if (temperature < 15) {
-        return 'Cool night ahead. Keep windows closed and use extra blankets if needed.';
+        return '🌙 It\'s a cool night. Might be a good idea to keep windows closed and grab an extra blanket.';
       }  
-      return 'Pleasant night conditions. Review tomorrow\'s forecast to plan ahead.';
+      return '🌙 Peaceful night conditions out there. Sleep well and check tomorrow\'s overview when you wake up!';
     }
 
     // MILD/MODERATE CONDITIONS
     if (temperature >= 18 && temperature <= 25) {
-      return 'Mild and comfortable. Great conditions for any outdoor plans you have!';  
+      return '👍 The weather is pleasantly mild. Whatever you have planned, the atmosphere is on your side!';  
     }
 
     // DEFAULT
-    return 'Stay updated with Auroclime\'s hourly forecasts for the most accurate weather info.';
+    return '💡 Keep an eye on the hourly forecast for the most accurate and up-to-date weather pacing.';
   }
 
   static String _getTimeOfDay(int hour) {
