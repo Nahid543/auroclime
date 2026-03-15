@@ -466,7 +466,7 @@ class _RadarScreenState extends State<RadarScreen>
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
     return Container(
-      padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPadding + 20),
+      padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPadding + 110),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
