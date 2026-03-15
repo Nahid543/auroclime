@@ -2,13 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../domain/search_service.dart';
 import 'location_search_dialog.dart';
-import '../screens/settings_screen.dart';
 
 class WeatherHeader extends StatelessWidget {
   final String locationName;
   final String dateText;
   final String lastUpdatedText;
-  final VoidCallback onSettingsChanged;
   final Function(double, double, String) onLocationSelected;
   final bool showDeleteButton;
   final VoidCallback onDelete;
@@ -19,7 +17,6 @@ class WeatherHeader extends StatelessWidget {
     required this.locationName,
     required this.dateText,
     required this.lastUpdatedText,
-    required this.onSettingsChanged,
     required this.onLocationSelected,
     this.showDeleteButton = false,
     required this.onDelete,
@@ -72,20 +69,6 @@ class WeatherHeader extends StatelessWidget {
                   _showDeleteConfirmation(context);
                 },
               ),
-            _buildCompactIconButton(
-              icon: Icons.settings_outlined,
-              color: Colors.white70,
-              onTap: () async {
-                HapticFeedback.lightImpact();
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const SettingsScreen(),
-                  ),
-                );
-                onSettingsChanged();
-              },
-            ),
             if (onShare != null)
               _buildCompactIconButton(
                 icon: Icons.share_outlined,

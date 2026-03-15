@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/app_lifecycle_service.dart';
 import '../core/theme/app_theme.dart';
-import '../features/weather/presentation/screens/home_screen.dart';
+import '../features/weather/presentation/screens/main_screen.dart';
 import '../features/weather/presentation/screens/onboarding_screen.dart';
 import '../features/weather/presentation/screens/splash_screen.dart';
 
@@ -46,7 +46,7 @@ class _AuroclimeAppState extends State<AuroclimeApp>
       themeMode: ThemeMode.system,
       home: const SplashScreen(),
       routes: {
-        '/home': (context) => const HomeScreen(),
+        '/home': (context) => const MainScreen(),
         '/onboarding': (context) => const OnboardingScreen(),
       },
     );

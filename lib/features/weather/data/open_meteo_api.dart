@@ -19,8 +19,8 @@ class OpenMeteoApi {
       queryParameters: <String, String>{
         'latitude': latitude.toStringAsFixed(4),
         'longitude': longitude.toStringAsFixed(4),
-        'current_weather': 'true',
-        'hourly': 'temperature_2m,precipitation_probability,apparent_temperature,uv_index,visibility,surface_pressure,dewpoint_2m,is_day',
+        'current': 'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weathercode,wind_speed_10m,wind_direction_10m,surface_pressure',
+        'hourly': 'temperature_2m,precipitation_probability,apparent_temperature,uv_index,visibility,surface_pressure,dewpoint_2m,is_day,weathercode',
         'daily':
             'weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset,uv_index_max',
         'timezone': 'auto',
