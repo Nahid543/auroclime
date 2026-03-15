@@ -135,7 +135,7 @@ class WeatherService {
     return UICurrentWeather(
       temperature: current.temperature.round(),
       feelsLike: current.apparentTemperature?.round() ?? current.temperature.round(),
-      humidity: 78,
+      humidity: current.humidity ?? 78,
       windKph: current.windSpeed,
       condition: _mapWeatherCode(current.weatherCode, current.isDay),
       weatherDescription: describeWeatherCode(current.weatherCode),
@@ -157,7 +157,7 @@ class WeatherService {
             timeLabel: h.formattedHour,
             temperature: h.temperature.round(),
             rainChance: h.precipitationProbability,
-            condition: WeatherCondition.partlyCloudy,
+            condition: _mapWeatherCode(h.weatherCode, h.isDay ?? true),
           ),
         )
         .toList();
